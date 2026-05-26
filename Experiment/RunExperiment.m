@@ -200,8 +200,11 @@ for metablock = 1:d.number_metablocks
             d.schedule.Type(vol) = "AudioTask";
             d.schedule.Colour(vol) = "Red";
             d.schedule.ColourTime(vol) = 0;
-            d.schedule.Audio(vol) = subblock_order.audio_action(1);
-            d.schedule.AudioTime(vol) = p.TIMING_IN_VOLUME.AUDIO_ACTION_START;
+            if v==1
+                % play sound in the first volume only if multiple volumes
+                d.schedule.Audio(vol) = subblock_order.audio_action(1);
+                d.schedule.AudioTime(vol) = p.TIMING_IN_VOLUME.AUDIO_ACTION_START;
+            end
         end
 
         % add each trial...
