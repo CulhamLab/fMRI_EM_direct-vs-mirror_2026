@@ -289,7 +289,8 @@ d.volume_data(1:d.number_volumes) = struct( 'time_startActual', nan, ...
                                             );
 
 
-%% Play view type audio
+%% Display and play view type audio
+fprintf("\n\nView Condition: %s\n\n\n", d.view_type);
 PsychPortAudio('FillBuffer', s.player, s.files.(d.loaded_order.audio_view(1)));
 PsychPortAudio('Start', s.player);
 PsychPortAudio('Stop', s.player, 1);
