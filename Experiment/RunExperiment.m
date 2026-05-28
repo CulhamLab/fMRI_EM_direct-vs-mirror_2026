@@ -7,7 +7,7 @@ p = get_parameters;
 
 % add filepaths
 p.FILEPATH.ORDER = sprintf("%sPAR%02d_RUN%02d.mat", p.FOLDERS.ORDERS, participant_number, run_number);
-p.FILEPATH.SAVE = sprintf("%sPAR%02d_RUN%02d_%s", p.FOLDERS.DATA, participant_number, run_number, datetime("now", Format="uuuu-MM-dd-HH-mm-ss"));
+p.FILEPATH.SAVE = sprintf("%sPAR%02d_RUN%02d_%s", p.FOLDERS.DATA, participant_number, run_number, datetime("now", "Format", "uuuu-MM-dd-HH-mm-ss"));
 
 
 %% Prep
