@@ -25,24 +25,17 @@ end
 % turn on specified pin
 switch colour
     case "Red"
-        pin_on = p.ARDUINO.RED.PIN;
-        brightness = p.ARDUINO.RED.BRIGHTNESS;
-        pins_off = [p.ARDUINO.YELLOW.PIN , p.ARDUINO.GREEN.PIN];
+        ard.analogWrite(p.ARDUINO.RED.PIN, p.ARDUINO.RED.BRIGHTNESS);
+        ard.analogWrite(p.ARDUINO.GREEN.PIN, 0);
 
     case "Yellow"
-        pin_on = p.ARDUINO.YELLOW.PIN;
-        brightness = p.ARDUINO.YELLOW.BRIGHTNESS;
-        pins_off = [p.ARDUINO.RED.PIN , p.ARDUINO.GREEN.PIN];
+        ard.analogWrite(p.ARDUINO.RED.PIN, p.ARDUINO.RED.BRIGHTNESS);
+        ard.analogWrite(p.ARDUINO.GREEN.PIN, p.ARDUINO.GREEN.BRIGHTNESS);
 
     case "Green"
-        pin_on = p.ARDUINO.GREEN.PIN;
-        brightness = p.ARDUINO.GREEN.BRIGHTNESS;
-        pins_off = [p.ARDUINO.RED.PIN , p.ARDUINO.YELLOW.PIN];
+        ard.analogWrite(p.ARDUINO.RED.PIN, 0);
+        ard.analogWrite(p.ARDUINO.GREEN.PIN, p.ARDUINO.GREEN.BRIGHTNESS);
 
     otherwise
         error({"Unknown colour: %s", colour})
-end
-ard.analogWrite(pin_on, brightness);
-for pin = pins_off
-    ard.analogWrite(pin, 0);
 end
