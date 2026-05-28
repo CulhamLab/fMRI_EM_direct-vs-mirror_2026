@@ -349,7 +349,7 @@ for vol = 1:d.number_volumes
     disp(d.volume_data(vol).schedule)
 
     % always stop audio at start of volume to prevent potential glitchy noise
-    PsychPortAudio('Stop', s.player);
+    % PsychPortAudio('Stop', s.player);
 
     % has audio?
     if ismissing(d.schedule.Audio(vol))
