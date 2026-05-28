@@ -46,15 +46,15 @@ p.SOUND.FILE_TYPE = ".wav"; % .wav works reliably
 %% Arduino
 
 % Pins
-p.ARDUINO.FIXATION.PIN =     2;
-% p.ARDUINO.ILLUM.PIN =          4;
-p.ARDUINO.RED.PIN =       6;
-p.ARDUINO.GREEN.PIN =        8;
+p.ARDUINO.FIXATION.PIN =     10; % could use 2 for the larger LED 
+% p.ARDUINO.ILLUM.PIN =       4; %not currently used
+p.ARDUINO.RED.PIN =           6;
+p.ARDUINO.GREEN.PIN =         8;
 
 % LED brightness (1-255)
-p.ARDUINO.FIXATION.BRIGHTNESS =     100;
-% p.ARDUINO.ILLUM.BRIGHTNESS =          255;
-p.ARDUINO.RED.BRIGHTNESS =       255;
+p.ARDUINO.FIXATION.BRIGHTNESS =     255;
+% p.ARDUINO.ILLUM.BRIGHTNESS =      255;
+p.ARDUINO.RED.BRIGHTNESS =          255;
 p.ARDUINO.GREEN.BRIGHTNESS =        255;
 
 
