@@ -312,6 +312,7 @@ while 1
         if any(keyCode(p.KEYS.TRIGGER))
             break
         elseif any(keyCode(p.KEYS.STOP))
+            arduino_LED_all_off
             error('Stop key was pressed.')
         end
     end
