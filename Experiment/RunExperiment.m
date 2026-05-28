@@ -93,7 +93,7 @@ for filename = audio_file_names
 end
 
 % initialize Arduino by turning all LEDs on
-arduino_LED_all_on(p)
+arduino_LED_all_off(p)
 
 % precalculate key time-in-volumes
 time_in_volume_can_accept_trigger =             p.TR - p.TRIGGER.TIME_BEFORE_TRIGGER_CAN_START_LOOKING_SEC;
