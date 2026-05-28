@@ -21,4 +21,4 @@ end
 ard.analogWrite(p.ARDUINO.FIXATION.PIN, p.ARDUINO.FIXATION.BRIGHTNESS);
 
 % display
-disp("All LEDs on")
+disp("Fixation LED on")
