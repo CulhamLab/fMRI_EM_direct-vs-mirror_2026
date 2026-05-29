@@ -60,7 +60,7 @@ d.loaded_order.audio_action = arrayfun(@(x) "action_"+x.lower+"_500ms", d.loaded
 d.loaded_order.audio_location = arrayfun(@(x) "location_"+x.lower+"_400ms", d.loaded_order.Location);
 
 % unique audio files needed
-audio_file_names = [unique(d.loaded_order.audio_view); unique(d.loaded_order.audio_action); unique(d.loaded_order.audio_location)]';
+audio_file_names = [unique(d.loaded_order.audio_view); unique(d.loaded_order.audio_action); unique(d.loaded_order.audio_location); "task_complete"]';
 
 % load and prepare sounds
 fprintf("Loading sounds:\n");
@@ -453,8 +453,13 @@ end % end of volume loop
 
 %% Done
 
-%final save
+% final save
 save(p.FILEPATH.SAVE + "_COMPLETE",'p','d')
+
+% play end audio
+PsychPortAudio('FillBuffer', s.player, s.files.task_complete);
+PsychPortAudio('Start', s.player);
+PsychPortAudio('Stop', s.player, 1);
 
 % stop and close audio
 fprintf("Closing audio device...\n")
