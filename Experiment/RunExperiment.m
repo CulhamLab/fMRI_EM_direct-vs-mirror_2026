@@ -95,6 +95,23 @@ end
 % initialize Arduino by turning all LEDs on
 arduino_LED_all_off(p)
 
+% initialize cameras
+if p.ENABLE_CAMERAS
+    % Interactive picker (assign devices to Camera 1/2, choose format & input source).
+    % Runs before any Psychtoolbox display calls so listdlg can grab focus.
+    if isfield(p.CAMERAS, 'INTERACTIVE_SETUP') && p.CAMERAS.INTERACTIVE_SETUP
+        p = CameraSetupWizard(p);
+    end
+
+    fprintf("\nInitializing cameras...\n");
+    cams = InitCameras(p, participant_number, run_number);
+    fprintf("Cameras ready (%d devices, %s @ %g fps).\n", ...
+        numel(p.CAMERAS.DEVICE_IDS), mat2str_format(p.CAMERAS.FORMAT), p.CAMERAS.FRAME_RATE);
+else
+    cams = [];
+    warning("ENABLE_CAMERAS IS FALSE: cameras will not be used")
+end
+
 % precalculate key time-in-volumes
 time_in_volume_can_accept_trigger =             p.TR - p.TRIGGER.TIME_BEFORE_TRIGGER_CAN_START_LOOKING_SEC;
 time_in_volume_must_stop_and_look_for_trigger = p.TR - p.TRIGGER.TIME_BEFORE_TRIGGER_MUST_START_LOOKING_SEC;
@@ -324,6 +341,14 @@ d.t0 = GetSecs;
 t0 = d.t0; % shortcut
 
 
+%% Start camera recording
+if p.ENABLE_CAMERAS
+    cams = StartRecording(cams);
+    d.camera_start_time = GetSecs - t0;
+    fprintf("Cameras recording (started %.3fs after t0).\n", d.camera_start_time);
+end
+
+
 %% Run per-volume events
 try
 for vol = 1:d.number_volumes
@@ -453,6 +478,20 @@ end % end of volume loop
 
 %% Done
 
+% stop camera recording
+if p.ENABLE_CAMERAS
+    d.camera_stop_time = GetSecs - t0;
+    cams = StopRecording(cams, p);
+    fprintf("Cameras stopped (%.3fs after t0).\n", d.camera_stop_time);
+    d.camera_files = cams.files;
+    d.camera_frames_logged = cams.frames_logged;
+    for i = 1:numel(cams.files)
+        [~, name, ext] = fileparts(cams.files{i});
+        fprintf("  %s%s  (%d frames)\n", name, ext, cams.frames_logged(i));
+    end
+    CloseCameras(cams);
+end
+
 % final save
 save(p.FILEPATH.SAVE + "_COMPLETE",'p','d')
 
@@ -477,14 +516,322 @@ catch err
     % save
     save(p.FILEPATH.SAVE + "_ERROR")
 
+    % stop and close cameras
+    if exist('cams', 'var') && ~isempty(cams)
+        try cams = StopRecording(cams, p); catch, end
+        try CloseCameras(cams); catch, end
+    end
+
     % stop and close audio
     fprintf("Closing audio device...\n")
     PsychPortAudio('Stop', s.player, 1);
     PsychPortAudio('Close', s.player);
-    
+
     %turn off all lights
     arduino_LED_all_off(p)
 
     % rethrow the error
     rethrow(err)
+end
+end % function RunExperiment
+
+
+%% ========================================================================
+%%  CAMERA HELPER FUNCTIONS
+%% ========================================================================
+
+function cams = InitCameras(p, participant_number, run_number)
+% Creates two videoinput objects configured for continuous disk logging.
+
+if numel(p.CAMERAS.DEVICE_IDS) ~= 2
+    error('p.CAMERAS.DEVICE_IDS must contain exactly two device indices.');
+end
+
+if iscell(p.CAMERAS.FORMAT)
+    fmt = p.CAMERAS.FORMAT;
+else
+    fmt = {p.CAMERAS.FORMAT, p.CAMERAS.FORMAT};
+end
+
+out_dir = fullfile(pwd, p.CAMERAS.OUTPUT_SUBDIR, ...
+    sprintf('PAR%02d_RUN%02d', participant_number, run_number));
+if ~exist(out_dir, 'dir')
+    mkdir(out_dir);
+end
+
+info = imaqhwinfo(p.CAMERAS.ADAPTOR);
+if isempty(info.DeviceIDs)
+    error('No %s devices found.', p.CAMERAS.ADAPTOR);
+end
+
+timestamp = char(datetime("now", "Format", "uuuu-MM-dd-HH-mm-ss"));
+
+cams.vid = cell(1, 2);
+cams.src = cell(1, 2);
+cams.files = {'', ''};
+cams.frames_logged = [0, 0];
+cams.active = false;
+
+for i = 1:2
+    dev_id = p.CAMERAS.DEVICE_IDS(i);
+    if ~ismember(dev_id, [info.DeviceIDs{:}])
+        error('Camera %d: device id %d not available on adaptor "%s".', ...
+              i, dev_id, p.CAMERAS.ADAPTOR);
+    end
+
+    vid = videoinput(p.CAMERAS.ADAPTOR, dev_id, fmt{i});
+
+    % Force RGB output (capture cards using YUV/UYVY/YUY2 otherwise
+    % produce green/purple color casts in the saved video).
+    try
+        vid.ReturnedColorSpace = 'rgb';
+    catch
+        warning('Camera %d: could not set ReturnedColorSpace=rgb.', i);
+    end
+
+    src = getselectedsource(vid);
+
+    try
+        src.FrameRate = num2str(p.CAMERAS.FRAME_RATE, '%.4f');
+    catch
+        warning('Camera %d: could not set source FrameRate; using driver default.', i);
+    end
+
+    % Optional input-source selector (e.g. Elgato Composite vs. S-Video)
+    if isfield(p.CAMERAS, 'INPUT_SOURCE') && ...
+       iscell(p.CAMERAS.INPUT_SOURCE) && ...
+       numel(p.CAMERAS.INPUT_SOURCE) >= i && ...
+       ~isempty(p.CAMERAS.INPUT_SOURCE{i})
+        try
+            src.InputSource = p.CAMERAS.INPUT_SOURCE{i};
+        catch
+            warning('Camera %d: could not set InputSource to %s.', ...
+                    i, p.CAMERAS.INPUT_SOURCE{i});
+        end
+    end
+
+    vid.FramesPerTrigger = Inf;
+    vid.TriggerRepeat    = 0;
+    triggerconfig(vid, 'manual');
+    vid.LoggingMode      = 'disk';
+    vid.FramesAcquiredFcnCount = 1;
+
+    % Assign DiskLogger for the whole-experiment recording.
+    fname = sprintf('PAR%02d_RUN%02d_%s_%s', ...
+        participant_number, run_number, p.CAMERAS.LABELS{i}, timestamp);
+    full_path = fullfile(out_dir, fname);
+    writer = VideoWriter(full_path, p.CAMERAS.VIDEO_PROFILE);
+    writer.FrameRate = p.CAMERAS.FRAME_RATE;
+    vid.DiskLogger = writer;
+    cams.files{i} = [full_path '.' lower(writer.FileFormat)];
+
+    cams.vid{i} = vid;
+    cams.src{i} = src;
+end
+end
+
+% --------------------------------------------------------------------------
+function cams = StartRecording(cams)
+% Starts and triggers both videoinputs back-to-back to minimise offset.
+for i = 1:2
+    start(cams.vid{i});
+end
+for i = 1:2
+    trigger(cams.vid{i});
+end
+cams.active = true;
+end
+
+% --------------------------------------------------------------------------
+function cams = StopRecording(cams, p)
+% Stops both videoinputs and waits for the IAT disk logger to flush.
+if ~isfield(cams, 'active') || ~cams.active
+    return;
+end
+
+for i = 1:2
+    if isvalid(cams.vid{i}) && strcmp(cams.vid{i}.Running, 'on')
+        stop(cams.vid{i});
+    end
+end
+
+deadline = GetSecs + p.CAMERAS.STOP_TIMEOUT_SEC;
+for i = 1:2
+    while strcmp(cams.vid{i}.Logging, 'on') && GetSecs < deadline
+        pause(0.01);
+    end
+    if strcmp(cams.vid{i}.Logging, 'on')
+        warning('Camera %d: DiskLogger did not finish within %.1f s.', ...
+                i, p.CAMERAS.STOP_TIMEOUT_SEC);
+    end
+    cams.frames_logged(i) = cams.vid{i}.DiskLoggerFrameCount;
+end
+
+cams.active = false;
+end
+
+% --------------------------------------------------------------------------
+function CloseCameras(cams)
+% Stops any in-progress recording and releases both videoinput objects.
+if isempty(cams) || ~isfield(cams, 'vid')
+    return;
+end
+for i = 1:numel(cams.vid)
+    v = cams.vid{i};
+    if isempty(v) || ~isvalid(v)
+        continue;
+    end
+    try
+        if strcmp(v.Running, 'on')
+            stop(v);
+        end
+    catch
+    end
+    try
+        delete(v);
+    catch
+    end
+end
+end
+
+% --------------------------------------------------------------------------
+function p = CameraSetupWizard(p)
+% Interactive picker: assign Camera 1 / Camera 2 from detected devices,
+% choose a video format, and pick an input source where available.
+% Mutates p.CAMERAS.DEVICE_IDS, FORMAT (as 1x2 cell), and INPUT_SOURCE.
+
+info = imaqhwinfo(p.CAMERAS.ADAPTOR);
+if isempty(info.DeviceInfo)
+    error('No %s devices found.', p.CAMERAS.ADAPTOR);
+end
+
+fprintf('\nDetected %s devices:\n', p.CAMERAS.ADAPTOR);
+for k = 1:numel(info.DeviceInfo)
+    fprintf('  [%d] %s\n', info.DeviceInfo(k).DeviceID, info.DeviceInfo(k).DeviceName);
+end
+
+deviceLabels = arrayfun(@(d) sprintf('[ID %d] %s', d.DeviceID, d.DeviceName), ...
+                       info.DeviceInfo, 'UniformOutput', false);
+
+% Pick Camera 1
+sel1 = listdlg('PromptString', {'Select device for CAMERA 1:'}, ...
+               'SelectionMode', 'single', ...
+               'ListString',    deviceLabels, ...
+               'ListSize',      [380 200], ...
+               'Name',          'Camera 1 setup');
+if isempty(sel1), error('Camera 1 selection cancelled.'); end
+dev1 = info.DeviceInfo(sel1);
+
+% Pick Camera 2 (exclude Camera 1)
+remainingIdx = setdiff(1:numel(info.DeviceInfo), sel1);
+if isempty(remainingIdx)
+    error('Only one device available; cannot assign Camera 2.');
+end
+sel2_rel = listdlg('PromptString', {'Select device for CAMERA 2:'}, ...
+                   'SelectionMode', 'single', ...
+                   'ListString',    deviceLabels(remainingIdx), ...
+                   'ListSize',      [380 200], ...
+                   'Name',          'Camera 2 setup');
+if isempty(sel2_rel), error('Camera 2 selection cancelled.'); end
+dev2 = info.DeviceInfo(remainingIdx(sel2_rel));
+
+% Pick formats
+fmt1 = pickFormat(dev1, 'Camera 1', p.CAMERAS.FORMAT);
+fmt2 = pickFormat(dev2, 'Camera 2', p.CAMERAS.FORMAT);
+
+% Pick input sources (probe by instantiating a temporary videoinput so we
+% can read the InputSource property). Skip silently if not available.
+src1_choice = probeInputSource(p.CAMERAS.ADAPTOR, dev1.DeviceID, fmt1, 'Camera 1');
+src2_choice = probeInputSource(p.CAMERAS.ADAPTOR, dev2.DeviceID, fmt2, 'Camera 2');
+
+% Commit choices back into p
+p.CAMERAS.DEVICE_IDS  = [dev1.DeviceID, dev2.DeviceID];
+p.CAMERAS.FORMAT      = {fmt1, fmt2};
+p.CAMERAS.INPUT_SOURCE = {src1_choice, src2_choice};
+
+fprintf('\nCamera 1: [ID %d] %s  (%s)\n', dev1.DeviceID, dev1.DeviceName, fmt1);
+fprintf('Camera 2: [ID %d] %s  (%s)\n\n', dev2.DeviceID, dev2.DeviceName, fmt2);
+end
+
+% --------------------------------------------------------------------------
+function fmt = pickFormat(dev, label, defaultFormat)
+% Prompts the user to pick a video format from a device's SupportedFormats.
+formats = dev.SupportedFormats;
+if isempty(formats)
+    error('%s: device "%s" reports no supported formats.', label, dev.DeviceName);
+end
+
+% Default selection: param value if available, then DefaultFormat, then 1
+defaultIdx = 1;
+candidate = '';
+if iscell(defaultFormat)
+    if ~isempty(defaultFormat), candidate = defaultFormat{1}; end
+else
+    candidate = defaultFormat;
+end
+hit = find(strcmp(formats, candidate), 1);
+if ~isempty(hit)
+    defaultIdx = hit;
+elseif isfield(dev, 'DefaultFormat') && ~isempty(dev.DefaultFormat)
+    hit = find(strcmp(formats, dev.DefaultFormat), 1);
+    if ~isempty(hit), defaultIdx = hit; end
+end
+
+sel = listdlg('PromptString', {sprintf('Select video format for %s', label), ...
+                               sprintf('(%s)', dev.DeviceName)}, ...
+              'SelectionMode', 'single', ...
+              'ListString',    formats, ...
+              'InitialValue',  defaultIdx, ...
+              'ListSize',      [380 260], ...
+              'Name',          [label ' format']);
+if isempty(sel)
+    error('%s format selection cancelled.', label);
+end
+fmt = formats{sel};
+end
+
+% --------------------------------------------------------------------------
+function choice = probeInputSource(adaptor, devID, fmt, label)
+% Briefly instantiates a videoinput to query InputSource choices.
+% Returns the selected source string, or '' if not applicable.
+choice = '';
+vid = [];
+try
+    vid = videoinput(adaptor, devID, fmt);
+    src = getselectedsource(vid);
+    propInfo = propinfo(src, 'InputSource');
+    choices = propInfo.ConstraintValue;
+    if isempty(choices) || ~iscell(choices) || numel(choices) < 2
+        return;
+    end
+    current = ''; try current = src.InputSource; catch, end
+    defaultIdx = find(strcmp(choices, current), 1);
+    if isempty(defaultIdx), defaultIdx = 1; end
+    sel = listdlg('PromptString', {sprintf('Select input source for %s', label)}, ...
+                  'SelectionMode', 'single', ...
+                  'ListString',    choices, ...
+                  'InitialValue',  defaultIdx, ...
+                  'ListSize',      [320 160], ...
+                  'Name',          [label ' input source']);
+    if isempty(sel)
+        choice = current;
+    else
+        choice = choices{sel};
+    end
+catch
+    choice = '';
+end
+if ~isempty(vid)
+    try delete(vid); catch, end
+end
+end
+
+% --------------------------------------------------------------------------
+function s = mat2str_format(fmt)
+% Pretty-print a format value (string or 1x2 cell) for the console.
+if iscell(fmt)
+    s = strjoin(fmt, ' | ');
+else
+    s = fmt;
+end
 end

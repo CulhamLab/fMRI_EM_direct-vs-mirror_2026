@@ -58,11 +58,28 @@ p.ARDUINO.RED.BRIGHTNESS =          255;
 p.ARDUINO.GREEN.BRIGHTNESS =        255;
 
 
+%% Cameras
+
+p.ENABLE_CAMERAS = true;
+p.CAMERAS.INTERACTIVE_SETUP = true;            % show device/format/input-source picker at script start
+p.CAMERAS.ADAPTOR        = 'winvideo';
+p.CAMERAS.DEVICE_IDS     = [1, 2];
+p.CAMERAS.LABELS         = {'cam0', 'cam1'};
+p.CAMERAS.FORMAT         = 'UYVY_720x480';                       % Elgato Video Capture (NTSC)
+p.CAMERAS.RESOLUTION     = [720, 480];
+p.CAMERAS.FRAME_RATE     = 29.97;                                % NTSC
+p.CAMERAS.INPUT_SOURCE   = {'Composite-Video', 'Composite-Video'};% Elgato composite input on both cards
+p.CAMERAS.VIDEO_PROFILE  = 'MPEG-4';
+p.CAMERAS.OUTPUT_SUBDIR  = 'Videos';          % under working directory
+p.CAMERAS.STOP_TIMEOUT_SEC = 5.0;             % max wait for DiskLogger flush
+
+
 %% Folders
 
 p.FOLDERS.ORDERS = "." + filesep + "Orders" + filesep;
 p.FOLDERS.DATA = "." + filesep + "Data" + filesep;
 p.FOLDERS.SOUNDS = "." + filesep + "Audio" + filesep;
+p.FOLDERS.VIDEOS = "." + filesep + "Videos" + filesep;
 
 
 %% Buttons
