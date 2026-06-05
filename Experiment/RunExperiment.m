@@ -178,6 +178,7 @@ fs = ["Volume"          "double"    % which volume is this
       "ColourTime"      "double"    % 0-TR or NaN
       "Audio"           "string"    % name of audio file or empty
       "AudioTime"       "double"    % 0-TR or NaN
+      "VideoInstruction"    "string"    % empty, Start, or Stop
       ];
 d.schedule = table('Size', [d.number_volumes size(fs,1)], 'VariableNames', fs(:,1), 'VariableTypes', fs(:,2));
 d.schedule{:,:} = nan;
@@ -202,6 +203,9 @@ end
 
 % add metablocks
 for metablock = 1:d.number_metablocks
+    % start video during the prior volume
+    d.schedule.VideoInstruction(vol) = "Start";
+
     % add each action subblock...
     for subblock = 1:d.number_subblocks_per_metablock
         % get loaded order
@@ -270,6 +274,9 @@ for metablock = 1:d.number_metablocks
             d.schedule.ColourTime(vol) = p.TIMING_IN_VOLUME.AUDIO_LOCATION_START;
         end
     end
+
+    % end video during the next volume
+    d.schedule.VideoInstruction(vol+1) = "Stop";
     
     % add internal baseline
     if metablock < d.number_metablocks
@@ -392,6 +399,16 @@ for vol = 1:d.number_volumes
         colour_complete = false;
         colour_to_set = d.schedule.Colour(vol);
         colour_time = d.schedule.ColourTime(vol);
+    end
+
+    % need to start/stop video recording?
+    switch d.schedule.VideoInstruction
+        case "Start"
+            % TODO: Karsten add start code here, must complete in <1 TR
+
+        case "Stop"
+            % TODO: Karsten add stop code here, must complete in <1 TR
+
     end
 
     % play out events...
