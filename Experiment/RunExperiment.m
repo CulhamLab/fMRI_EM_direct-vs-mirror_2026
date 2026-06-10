@@ -564,6 +564,17 @@ if numel(p.CAMERAS.DEVICE_IDS) ~= 2
     error('p.CAMERAS.DEVICE_IDS must contain exactly two device indices.');
 end
 
+% Raise IAT's frame-memory pool so a temporarily slow encoder/disk can buffer
+% without throwing "Unable to allocate memory for an incoming image frame".
+% Default 8 GB on a 32 GB machine is plenty of headroom.
+if isfield(p.CAMERAS, 'IMAQ_MEM_LIMIT_BYTES') && ~isempty(p.CAMERAS.IMAQ_MEM_LIMIT_BYTES)
+    try
+        imaqmem(p.CAMERAS.IMAQ_MEM_LIMIT_BYTES);
+    catch
+        warning('Could not raise imaqmem limit.');
+    end
+end
+
 if iscell(p.CAMERAS.FORMAT)
     fmt = p.CAMERAS.FORMAT;
 else
@@ -598,12 +609,17 @@ for i = 1:2
 
     vid = videoinput(p.CAMERAS.ADAPTOR, dev_id, fmt{i});
 
-    % Force RGB output (capture cards using YUV/UYVY/YUY2 otherwise
-    % produce green/purple color casts in the saved video).
+    % Set returned color space. 'grayscale' for B&W cameras gives 1-channel
+    % frames (smaller files, less CPU). 'rgb' converts YUV/UYVY to RGB to
+    % avoid green/purple color casts on color sources.
+    color_space = 'rgb';
+    if isfield(p.CAMERAS, 'COLOR_SPACE') && ~isempty(p.CAMERAS.COLOR_SPACE)
+        color_space = p.CAMERAS.COLOR_SPACE;
+    end
     try
-        vid.ReturnedColorSpace = 'rgb';
+        vid.ReturnedColorSpace = color_space;
     catch
-        warning('Camera %d: could not set ReturnedColorSpace=rgb.', i);
+        warning('Camera %d: could not set ReturnedColorSpace=%s.', i, color_space);
     end
 
     src = getselectedsource(vid);
@@ -630,15 +646,32 @@ for i = 1:2
     vid.FramesPerTrigger = Inf;
     vid.TriggerRepeat    = 0;
     triggerconfig(vid, 'manual');
-    vid.LoggingMode      = 'disk';
-    vid.FramesAcquiredFcnCount = 1;
+    vid.LoggingMode      = 'disk';      % stream to disk only; no in-memory copy
+    vid.FramesAcquiredFcn = '';         % no per-frame callback
+
+    % Subsample frames before they reach the disk logger. Keeps the camera
+    % running at native fps (stable timing) but writes every Nth frame,
+    % giving the MJPEG encoder time to keep up.
+    if isfield(p.CAMERAS, 'FRAME_GRAB_INTERVAL') && ~isempty(p.CAMERAS.FRAME_GRAB_INTERVAL)
+        try
+            vid.FrameGrabInterval = p.CAMERAS.FRAME_GRAB_INTERVAL;
+        catch
+            warning('Camera %d: could not set FrameGrabInterval.', i);
+        end
+    end
 
     % Assign DiskLogger for the whole-experiment recording.
     fname = sprintf('PAR%02d_RUN%02d_%s_%s', ...
         participant_number, run_number, p.CAMERAS.LABELS{i}, timestamp);
     full_path = fullfile(out_dir, fname);
     writer = VideoWriter(full_path, p.CAMERAS.VIDEO_PROFILE);
-    writer.FrameRate = p.CAMERAS.FRAME_RATE;
+    % Effective recorded fps = source fps / FrameGrabInterval. Tagging the
+    % file with this value makes real-time playback match wall-clock.
+    grab_interval = 1;
+    if isfield(p.CAMERAS, 'FRAME_GRAB_INTERVAL') && ~isempty(p.CAMERAS.FRAME_GRAB_INTERVAL)
+        grab_interval = p.CAMERAS.FRAME_GRAB_INTERVAL;
+    end
+    writer.FrameRate = p.CAMERAS.FRAME_RATE / grab_interval;
     vid.DiskLogger = writer;
     cams.files{i} = [full_path '.' lower(writer.FileFormat)];
 
@@ -656,6 +689,7 @@ end
 for i = 1:2
     trigger(cams.vid{i});
 end
+cams.start_wall_time = GetSecs;     % for measuring actual delivered fps
 cams.active = true;
 end
 
@@ -666,6 +700,7 @@ if ~isfield(cams, 'active') || ~cams.active
     return;
 end
 
+stop_wall_time = GetSecs;
 for i = 1:2
     if isvalid(cams.vid{i}) && strcmp(cams.vid{i}.Running, 'on')
         stop(cams.vid{i});
@@ -684,7 +719,69 @@ for i = 1:2
     cams.frames_logged(i) = cams.vid{i}.DiskLoggerFrameCount;
 end
 
+% Measure actual delivered fps and (optionally) remux the AVI so its
+% declared FrameRate matches what was actually captured. Without this
+% step, dropped/slow frames make the saved file play back faster than
+% wall-clock real time.
+elapsed = stop_wall_time - cams.start_wall_time;
+cams.recording_duration_sec = elapsed;
+cams.declared_fps  = zeros(1, 2);
+cams.actual_fps    = zeros(1, 2);
+for i = 1:2
+    vid_i = cams.vid{i};
+    writer_i = vid_i.DiskLogger;
+    cams.declared_fps(i) = writer_i.FrameRate;
+    if elapsed > 0
+        cams.actual_fps(i) = cams.frames_logged(i) / elapsed;
+    end
+    fprintf('Camera %d: %d frames written in %.2fs (declared %.3f fps, actual %.3f fps).\n', ...
+        i, cams.frames_logged(i), elapsed, cams.declared_fps(i), cams.actual_fps(i));
+end
+
+if isfield(p.CAMERAS, 'AUTO_REMUX_TO_ACTUAL_FPS') && p.CAMERAS.AUTO_REMUX_TO_ACTUAL_FPS
+    tol = 0.02;
+    if isfield(p.CAMERAS, 'REMUX_FPS_TOLERANCE') && ~isempty(p.CAMERAS.REMUX_FPS_TOLERANCE)
+        tol = p.CAMERAS.REMUX_FPS_TOLERANCE;
+    end
+    for i = 1:2
+        if cams.actual_fps(i) > 0 && ...
+           abs(cams.declared_fps(i) - cams.actual_fps(i)) / cams.declared_fps(i) > tol
+            new_file = RemuxToFps(cams.files{i}, cams.actual_fps(i), p.CAMERAS.VIDEO_PROFILE);
+            if ~isempty(new_file)
+                fprintf('  Camera %d: remuxed -> %s\n', i, new_file);
+                cams.files{i} = new_file;
+            end
+        end
+    end
+end
+
 cams.active = false;
+end
+
+% --------------------------------------------------------------------------
+function out_file = RemuxToFps(in_file, new_fps, profile)
+% Rewrites an AVI with a corrected FrameRate so playback duration matches
+% the wall-clock recording. Returns the new file path (original is kept).
+out_file = '';
+if ~exist(in_file, 'file')
+    warning('Remux: input file not found: %s', in_file);
+    return;
+end
+try
+    [pth, name, ext] = fileparts(in_file);
+    out_path_base = fullfile(pth, [name '_corrected']);
+    vr = VideoReader(in_file);
+    vw = VideoWriter(out_path_base, profile);
+    vw.FrameRate = new_fps;
+    open(vw);
+    while hasFrame(vr)
+        writeVideo(vw, readFrame(vr));
+    end
+    close(vw);
+    out_file = [out_path_base ext];
+catch err
+    warning('Remux failed for %s: %s', in_file, err.message);
+end
 end
 
 % --------------------------------------------------------------------------

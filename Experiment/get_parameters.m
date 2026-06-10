@@ -1,7 +1,7 @@
 function [p] = get_parameters(p) 
 
 %% Debug / Testing
-p.ENABLE_ARDUINO = true;
+p.ENABLE_ARDUINO = false;
 
 
 %% Timing
@@ -69,9 +69,14 @@ p.CAMERAS.FORMAT         = 'UYVY_720x480';                       % Elgato Video 
 p.CAMERAS.RESOLUTION     = [720, 480];
 p.CAMERAS.FRAME_RATE     = 29.97;                                % NTSC
 p.CAMERAS.INPUT_SOURCE   = {'Composite-Video', 'Composite-Video'};% Elgato composite input on both cards
-p.CAMERAS.VIDEO_PROFILE  = 'MPEG-4';
+p.CAMERAS.VIDEO_PROFILE  = 'Motion JPEG AVI'; % MJPEG accepts 1- or 3-band frames; B&W input compresses very efficiently
+p.CAMERAS.COLOR_SPACE    = 'rgb';             % many winvideo UYVY sources silently ignore 'grayscale'; keep rgb for reliability
 p.CAMERAS.OUTPUT_SUBDIR  = 'Videos';          % under working directory
 p.CAMERAS.STOP_TIMEOUT_SEC = 5.0;             % max wait for DiskLogger flush
+p.CAMERAS.FRAME_GRAB_INTERVAL = 2;            % log every Nth source frame (2 => ~15fps effective at 30fps source); 1 = no subsampling
+p.CAMERAS.IMAQ_MEM_LIMIT_BYTES = 8e9;         % imaqmem frame-memory pool (bytes); large = effectively unbounded on 32GB system
+p.CAMERAS.AUTO_REMUX_TO_ACTUAL_FPS = true;    % rewrite AVI with measured fps so playback duration matches wall-clock recording
+p.CAMERAS.REMUX_FPS_TOLERANCE = 0.02;         % only remux if |declared - measured|/declared exceeds this
 
 
 %% Folders
